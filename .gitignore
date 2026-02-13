@@ -1,0 +1,10 @@
+data/
+models/
+implementation/
+notebooks/
+*.pth
+*.joblib
+*.pkl
+*.json
+__pycache__/
+.ipynb_checkpoints/
