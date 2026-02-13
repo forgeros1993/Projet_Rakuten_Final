@@ -1,27 +1,11 @@
-streamlit
+streamlit==1.31.0
 pandas
 numpy
 Pillow
 scikit-learn
 xgboost
-torch
-torchvision
-transformers
-graphviz
-joblib
-plotly
-matplotlib
-seaborn
-timm
-openpyxl
-streamlit
-pandas
-numpy
-Pillow
-scikit-learn
-xgboost
-torch
-torchvision
+torch --index-url https://download.pytorch.org/whl/cpu
+torchvision --index-url https://download.pytorch.org/whl/cpu
 transformers
 timm
 opencv-python-headless
