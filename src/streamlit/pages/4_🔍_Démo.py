@@ -216,7 +216,7 @@ with tabs[1]:
                 # ecrasement temporaire pour la prediction
                 noisy.save("temp_demo.jpg")
             else:
-                st.image(img_file, caption="Image Originale", use_container_width=True)
+                st.image(img_file, caption="Image Originale", use_column_width=True)
     
     with col2:
         st.subheader("Analyse Visuelle")

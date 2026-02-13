@@ -82,37 +82,41 @@ with c3:
 
 st.success("💡 **Synergie** : DINOv3 donne la direction générale, XGBoost valide statistiquement, EfficientNet gère les détails de texture.")
 
-# --- section image heatmap ---
+# --- SECTION IMAGE HEATMAP ---
 st.write("---")
 st.subheader("Visualisation des Zones d'Interet")
 
-# je definis les chemins possibles
-# le dossier actuel (pages) et le dossier assets
-dir_actuel = Path(__file__).parent
-dir_assets = dir_actuel.parent / "assets"
+# Chemins robustes
+dir_pages = Path(__file__).parent
+dir_assets = dir_pages.parent / "assets"
 
-chemins_test = [
-    dir_actuel / "heatmap_demo.png",
+# Liste des endroits où chercher l'image
+chemins_possibles = [
+    dir_pages / "heatmap_demo.png",  # Priorité au dossier local
     dir_assets / "heatmap_demo.png"
 ]
 
-trouve = False
-for p in chemins_test:
-    if p.exists():
-        try:
-            # je charge et j affiche
-            image_cam = Image.open(p)
-            st.image(image_cam, caption="Comparaison : Attention (DINO) vs Activation (EffNet)", use_container_width=True)
-            trouve = True
-            break
-        except Exception as e:
-            st.error(f"erreur lecture fichier : {e}")
+image_chargee = None
+chemin_trouve = None
 
-if not trouve:
-    st.warning("Fichier heatmap_demo.png non detecte")
-    # je t affiche les chemins testes pour debug
-    st.write("Chemins verifies :")
-    for p in chemins_test:
+# 1. On cherche le fichier
+for p in chemins_possibles:
+    if p.exists():
+        chemin_trouve = p
+        break
+
+# 2. On essaie de l'afficher
+if chemin_trouve:
+    try:
+        image_cam = Image.open(chemin_trouve)
+        # CORRECTION ICI : use_column_width au lieu de use_container_width
+        st.image(image_cam, caption="Comparaison : Attention (DINO) vs Activation (EffNet)", use_column_width=True)
+    except Exception as e:
+        st.error(f"Erreur lors de l'affichage de l'image : {e}")
+else:
+    st.warning("⚠️ Fichier 'heatmap_demo.png' introuvable.")
+    st.write("J'ai cherché ici :")
+    for p in chemins_possibles:
         st.code(str(p))
 
 # --- SECTION FUSION (MISE A JOUR STRATÉGIQUE) ---

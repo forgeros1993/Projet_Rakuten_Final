@@ -46,7 +46,9 @@ APP_CONFIG = {
 
 # --- CONFIG MODÈLE ---
 MODEL_CONFIG = {
-    "use_mock": True,  # INDISPENSABLE POUR LE CLOUD
+    "use_mock": False,
+    # Poids Fusion : 30% Texte / 70% Image
     "fusion_weights_global": {"text": 0.5, "image": 0.5},
+    # Poids Voting Image : DINO(4) / XGB(2) / Eff(1)
     "voting_weights": {"dino": 4.0, "xgb": 2.0, "effnet": 1.0}
 }

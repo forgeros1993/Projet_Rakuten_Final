@@ -5,6 +5,7 @@ import json
 import numpy as np
 import cv2
 import torch
+import torch.nn as nn
 import timm
 import xgboost as xgb
 from torchvision import models, transforms
@@ -26,9 +27,7 @@ class MultimodalClassifier:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"🚀 Initialisation MultimodalClassifier sur {self.device}")
         
-        # 1. LISTE OFFICIELLE DES CODES RAKUTEN (ORDRE TRIÉ STANDARD)
-        # C'est l'ordre utilisé par XGBoost et Scikit-Learn par défaut.
-        # On s'en sert pour traduire l'index 0 -> "10", index 1 -> "40", etc.
+        # 1. LISTE OFFICIELLE DES CODES RAKUTEN
         self.OFFICIAL_CODES = [
             "10", "40", "50", "60", "1140", "1160", "1180", "1280", "1281",
             "1300", "1301", "1302", "1320", "1560", "1920", "1940", "2060",
@@ -36,7 +35,7 @@ class MultimodalClassifier:
             "2705", "2905"
         ]
         
-        # 2. Chargement Mapping (Code -> Nom)
+        # 2. Chargement Mapping
         self.mapping = self._load_mapping()
         
         # 3. Chargement Modèles Images
@@ -47,21 +46,19 @@ class MultimodalClassifier:
         self.text_model = self._load_text_model()
 
     def _load_mapping(self):
-        """Charge le mapping avec double clés (int et str) pour sécurité absolue"""
         mapping = {}
-        
         # A. Tentative JSON
         if os.path.exists(CATEGORY_MAPPING_PATH):
             try:
                 with open(CATEGORY_MAPPING_PATH, 'r', encoding='utf-8') as f:
                     raw_map = json.load(f)
                     for k, v in raw_map.items():
-                        mapping[str(k).strip()] = v  # Clé string "10"
-                        try: mapping[int(k)] = v     # Clé int 10
+                        mapping[str(k).strip()] = v
+                        try: mapping[int(k)] = v
                         except: pass
             except Exception: pass
         
-        # B. Dictionnaire de secours (Si JSON vide)
+        # B. Dictionnaire de secours
         if len(mapping) < 10:
             print("⚠️ Mapping JSON non trouvé/vide. Utilisation du mapping de secours.")
             raw_fallback = {
@@ -78,7 +75,6 @@ class MultimodalClassifier:
             for k, v in raw_fallback.items():
                 mapping[str(k)] = v
                 mapping[k] = v
-                
         return mapping
 
     def _load_text_model(self):
@@ -91,7 +87,8 @@ class MultimodalClassifier:
 
     def _load_image_models(self):
         loaded = {}
-        # DINOv3
+        
+        # --- DINOv3 ---
         try:
             dino = timm.create_model('vit_large_patch14_reg4_dinov2.lvd142m', pretrained=False, num_classes=27)
             if os.path.exists(IMAGE_MODEL_PATH):
@@ -99,9 +96,10 @@ class MultimodalClassifier:
                 dino.to(self.device).eval()
                 loaded['dino'] = dino
                 print("✅ DINOv3 chargé")
-        except Exception: pass
+        except Exception as e: 
+            print(f"❌ Erreur DINO: {e}")
 
-        # EfficientNet
+        # --- EfficientNet ---
         try:
             eff = models.efficientnet_b0(weights=None)
             eff.classifier[1] = nn.Linear(1280, 27)
@@ -110,10 +108,18 @@ class MultimodalClassifier:
                 eff.to(self.device).eval()
                 loaded['effnet'] = eff
                 print("✅ EfficientNet chargé")
-        except Exception: pass
+        except Exception as e:
+            print(f"❌ Erreur EfficientNet: {e}")
 
-        # XGBoost + ResNet
+        # --- XGBoost + ResNet ---
         try:
+            # --- MOUCHARDS DE DEBUG ---
+            print("------------------------------------------------")
+            print(f"🕵️ DEBUG XGBOOST - Chemin cherché : {XGB_MODEL_PATH}")
+            print(f"📂 DEBUG XGBOOST - Existe physiquement ? : {os.path.exists(XGB_MODEL_PATH)}")
+            print("------------------------------------------------")
+            # --------------------------
+
             if os.path.exists(XGB_MODEL_PATH):
                 resnet = models.resnet50(weights="IMAGENET1K_V1")
                 extractor = nn.Sequential(*list(resnet.children())[:-1]).to(self.device).eval()
@@ -123,9 +129,11 @@ class MultimodalClassifier:
                 xgb_model.load_model(str(XGB_MODEL_PATH))
                 loaded['xgb'] = xgb_model
                 print("✅ XGBoost chargé")
-                # ON NE CHARGE PLUS L'ENCODEUR .PKL ICI CAR IL EST BUGGÉ
-                # On utilisera self.OFFICIAL_CODES à la place
-        except Exception as e: print(f"❌ Erreur XGBoost: {e}")
+            else:
+                print("⚠️ XGBoost ignoré : Fichier introuvable.")
+                
+        except Exception as e: 
+            print(f"❌ Erreur XGBoost: {e}")
         
         return loaded
 
@@ -165,7 +173,7 @@ class MultimodalClassifier:
                     prob_eff = F.softmax(self.img_models['effnet'](t_eff), dim=1).cpu().numpy()[0]
 
             # 3. XGBoost (OpenCV STRICT)
-            if 'xgb' in self.img_models:
+            if 'xgb' in self.img_models and 'extractor' in self.img_models:
                 img_cv = cv2.imread(str(image_path))
                 if img_cv is not None:
                     img_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
@@ -178,9 +186,27 @@ class MultimodalClassifier:
                         feats = self.img_models['extractor'](t_xgb).squeeze().cpu().numpy()
                     prob_xgb = self.img_models['xgb'].predict_proba(feats.reshape(1, -1))[0]
 
-            # 4. Voting
+            # 4. Voting Dynamique
             w = MODEL_CONFIG['voting_weights']
-            final_prob = (w['dino']*prob_dino + w['xgb']*prob_xgb + w['effnet']*prob_eff) / sum(w.values())
+            final_prob = np.zeros(27)
+            total_weight = 0.0
+
+            if 'dino' in self.img_models:
+                final_prob += prob_dino * w['dino']
+                total_weight += w['dino']
+            
+            if 'xgb' in self.img_models and 'extractor' in self.img_models:
+                final_prob += prob_xgb * w['xgb']
+                total_weight += w['xgb']
+
+            if 'effnet' in self.img_models:
+                final_prob += prob_eff * w['effnet']
+                total_weight += w['effnet']
+
+            if total_weight > 0:
+                final_prob /= total_weight
+            else:
+                final_prob[0] = 1.0 
 
             return self._format_output(final_prob)
 
@@ -192,8 +218,6 @@ class MultimodalClassifier:
         if not self.text_model: return self._fallback_result()
         try:
             t = [text] if isinstance(text, str) else text
-            
-            # Gestion modèles sans predict_proba (LinearSVC)
             if hasattr(self.text_model, "predict_proba"):
                 probs = self.text_model.predict_proba(t)[0]
             elif hasattr(self.text_model, "decision_function"):
@@ -203,9 +227,7 @@ class MultimodalClassifier:
             else:
                 probs = np.zeros(27); probs[0] = 1.0 
             
-            # Formatage
             results = []
-            # On utilise self.OFFICIAL_CODES car le modèle texte a été entrainé sur les mêmes labels
             for i, p in enumerate(probs):
                 code = self.OFFICIAL_CODES[i] if i < len(self.OFFICIAL_CODES) else str(i)
                 results.append({
@@ -221,10 +243,8 @@ class MultimodalClassifier:
         try:
             r_txt = self.predict_text(text)
             r_img = self.predict_image(image_path)
-            
             s_txt = {r['label']: r['confidence'] for r in r_txt}
             s_img = {r['label']: r['confidence'] for r in r_img}
-            
             w_t = MODEL_CONFIG['fusion_weights_global']['text']
             w_i = MODEL_CONFIG['fusion_weights_global']['image']
             
@@ -242,16 +262,9 @@ class MultimodalClassifier:
     def _format_output(self, probabilities):
         results = []
         for i, p in enumerate(probabilities):
-            # ON N'UTILISE PLUS LE LE.INVERSE_TRANSFORM CORROMPU
-            # On mappe directement l'index i sur la liste triée officielle
             real_code = self.OFFICIAL_CODES[i] if i < len(self.OFFICIAL_CODES) else str(i)
-
-            # On cherche le nom
-            # On essaie en str ("10") puis en int (10)
             name = self.mapping.get(real_code, self.mapping.get(int(real_code) if real_code.isdigit() else -1, "Inconnu"))
-            
             results.append({"label": real_code, "name": name, "confidence": float(p)})
-            
         return sorted(results, key=lambda x: x['confidence'], reverse=True)
 
     def _fallback_result(self):
