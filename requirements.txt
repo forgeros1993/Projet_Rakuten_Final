@@ -6,9 +6,12 @@ scikit-learn
 xgboost
 torch
 torchvision
+transformers
 timm
 opencv-python-headless
 joblib
 plotly
 matplotlib
 seaborn
+openpyxl
+tensorflow-cpu
