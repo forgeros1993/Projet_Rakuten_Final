@@ -4,8 +4,8 @@ numpy
 Pillow
 scikit-learn
 xgboost
-torch --index-url https://download.pytorch.org/whl/cpu
-torchvision --index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
 transformers
 timm
 opencv-python-headless
@@ -14,10 +14,4 @@ plotly
 matplotlib
 seaborn
 openpyxl
-tensorflow
-xgboost
-scikit-learn
-joblib
-pillow
-numpy
-pandas
+tensorflow-cpu
