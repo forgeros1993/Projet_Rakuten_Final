@@ -14,3 +14,10 @@ plotly
 matplotlib
 seaborn
 openpyxl
+tensorflow
+xgboost
+scikit-learn
+joblib
+pillow
+numpy
+pandas

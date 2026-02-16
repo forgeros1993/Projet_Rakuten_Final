@@ -13,6 +13,13 @@ from PIL import Image
 import torch.nn.functional as F
 from pathlib import Path
 
+# --- BLOC KERAS (OBLIGATOIRE POUR LE TITAN) ---
+# On charge TensorFlow pour que le XGBoost reçoive les bonnes features
+import tensorflow as tf
+from tensorflow.keras.applications.resnet50 import ResNet50, preprocess_input
+from tensorflow.keras.preprocessing import image as keras_image
+# ----------------------------------------------
+
 # Import config sécurisé
 try:
     from config import (
@@ -35,8 +42,8 @@ class MultimodalClassifier:
             "2705", "2905"
         ]
         
-        # 2. Chargement Mapping
-        self.mapping = self._load_mapping()
+        # 2. Chargement Mapping (EN DUR POUR AFFICHAGE PROPRE)
+        self.mapping = self._load_hardcoded_mapping()
         
         # 3. Chargement Modèles Images
         self.img_models = self._load_image_models()
@@ -45,61 +52,67 @@ class MultimodalClassifier:
         # 4. Chargement Modèle Texte
         self.text_model = self._load_text_model()
 
-    def _load_mapping(self):
-        mapping = {}
-        # A. Tentative JSON
-        if os.path.exists(CATEGORY_MAPPING_PATH):
-            try:
-                with open(CATEGORY_MAPPING_PATH, 'r', encoding='utf-8') as f:
-                    raw_map = json.load(f)
-                    for k, v in raw_map.items():
-                        mapping[str(k).strip()] = v
-                        try: mapping[int(k)] = v
-                        except: pass
-            except Exception: pass
-        
-        # B. Dictionnaire de secours
-        if len(mapping) < 10:
-            print("⚠️ Mapping JSON non trouvé/vide. Utilisation du mapping de secours.")
-            raw_fallback = {
-                10: "Livres occasion", 40: "Jeux Vidéo", 50: "Accessoires Gaming",
-                60: "Consoles", 1140: "Figurines", 1160: "Cartes à jouer",
-                1180: "Jeux de Rôle", 1280: "Jouets enfants", 1281: "Jeux de société",
-                1300: "Modélisme", 1301: "Loisirs créatifs", 1302: "Fournitures scolaires",
-                1320: "Puériculture", 1560: "Meubles", 1920: "Linge de maison",
-                1940: "Epicerie", 2060: "Décoration", 2220: "Animalerie",
-                2280: "Magazines", 2403: "BD et Comics", 2462: "Jeux PC",
-                2522: "Papeterie", 2582: "Jardin", 2583: "Piscine / Spa",
-                2585: "Bricolage", 2705: "Informatique", 2905: "Jeux Vidéo (Dém.)"
-            }
-            for k, v in raw_fallback.items():
-                mapping[str(k)] = v
-                mapping[k] = v
-        return mapping
+    def _load_hardcoded_mapping(self):
+        """
+        Dictionnaire complet pour remplacer les codes par du texte lisible.
+        C'est ce qui s'affichera dans la démo.
+        """
+        return {
+            "10": "Livres occasion",
+            "40": "Jeux Vidéo",
+            "50": "Accessoires Gaming",
+            "60": "Consoles de jeux",
+            "1140": "Figurines & Pop",
+            "1160": "Cartes (Pokémon/Magic)",
+            "1180": "Jeux de Rôle & Figurines",
+            "1280": "Jouets Enfants / Peluches",
+            "1281": "Jeux de Société",
+            "1300": "Modélisme (Drones/RC)",
+            "1301": "Loisirs Créatifs / Beaux-Arts",
+            "1302": "Fournitures Scolaires",
+            "1320": "Puériculture & Bébés",
+            "1560": "Mobilier & Déco",
+            "1920": "Linge de Maison",
+            "1940": "Épicerie & Confitiserie",
+            "2060": "Décoration Intérieure",
+            "2220": "Animalerie",
+            "2280": "Journaux & Magazines",
+            "2403": "BD, Mangas & Comics",
+            "2462": "Jeux Vidéo (Dématérialisé)",
+            "2522": "Papeterie & Bureau",
+            "2582": "Jardin & Extérieur",
+            "2583": "Piscine & Spa",
+            "2585": "Bricolage & Outillage",
+            "2705": "Informatique & High-Tech",
+            "2905": "Jeux PC (Codes)"
+        }
 
     def _load_text_model(self):
         try:
             if os.path.exists(TEXT_MODEL_PATH):
                 return joblib.load(TEXT_MODEL_PATH)
-        except Exception as e:
-            print(f"⚠️ Erreur chargement texte (Version mismatch possible): {e}")
+        except Exception: pass
         return None
 
     def _load_image_models(self):
         loaded = {}
         
-        # --- DINOv3 ---
+        # --- A. DINOv3 (PyTorch) ---
         try:
-            dino = timm.create_model('vit_large_patch14_reg4_dinov2.lvd142m', pretrained=False, num_classes=27)
+            # On tente de charger Reg4 sinon standard
+            try:
+                dino = timm.create_model('vit_large_patch14_reg4_dinov2.lvd142m', pretrained=False, num_classes=27)
+            except:
+                dino = timm.create_model('vit_large_patch14_dinov2.lvd142m', pretrained=False, num_classes=27)
+                
             if os.path.exists(IMAGE_MODEL_PATH):
                 dino.load_state_dict(torch.load(IMAGE_MODEL_PATH, map_location=self.device))
                 dino.to(self.device).eval()
                 loaded['dino'] = dino
                 print("✅ DINOv3 chargé")
-        except Exception as e: 
-            print(f"❌ Erreur DINO: {e}")
+        except Exception as e: print(f"❌ Erreur DINO: {e}")
 
-        # --- EfficientNet ---
+        # --- B. EfficientNet (PyTorch) ---
         try:
             eff = models.efficientnet_b0(weights=None)
             eff.classifier[1] = nn.Linear(1280, 27)
@@ -108,32 +121,24 @@ class MultimodalClassifier:
                 eff.to(self.device).eval()
                 loaded['effnet'] = eff
                 print("✅ EfficientNet chargé")
-        except Exception as e:
-            print(f"❌ Erreur EfficientNet: {e}")
+        except Exception as e: print(f"❌ Erreur EffNet: {e}")
 
-        # --- XGBoost + ResNet ---
+        # --- C. XGBoost (PIPELINE KERAS HYBRIDE) ---
         try:
-            # --- MOUCHARDS DE DEBUG ---
-            print("------------------------------------------------")
-            print(f"🕵️ DEBUG XGBOOST - Chemin cherché : {XGB_MODEL_PATH}")
-            print(f"📂 DEBUG XGBOOST - Existe physiquement ? : {os.path.exists(XGB_MODEL_PATH)}")
-            print("------------------------------------------------")
-            # --------------------------
-
-            if os.path.exists(XGB_MODEL_PATH):
-                resnet = models.resnet50(weights="IMAGENET1K_V1")
-                extractor = nn.Sequential(*list(resnet.children())[:-1]).to(self.device).eval()
-                loaded['extractor'] = extractor
-                
+            # On force la conversion en string pour XGBoost car il n'aime pas les objets Path de Windows
+            xgb_path_str = str(XGB_MODEL_PATH)
+            
+            if os.path.exists(xgb_path_str):
                 xgb_model = xgb.XGBClassifier()
-                xgb_model.load_model(str(XGB_MODEL_PATH))
+                xgb_model.load_model(xgb_path_str)
                 loaded['xgb'] = xgb_model
-                print("✅ XGBoost chargé")
-            else:
-                print("⚠️ XGBoost ignoré : Fichier introuvable.")
                 
-        except Exception as e: 
-            print(f"❌ Erreur XGBoost: {e}")
+                print("⏳ Chargement Keras ResNet50 pour Titan...")
+                self.keras_resnet = ResNet50(weights='imagenet', include_top=False, pooling='avg')
+                print("✅ XGBoost + Keras ResNet chargés")
+            else:
+                print(f"⚠️ XGBoost introuvable à : {xgb_path_str}")
+        except Exception as e: print(f"❌ Erreur XGBoost Pipeline: {e}")
         
         return loaded
 
@@ -152,41 +157,36 @@ class MultimodalClassifier:
         }
 
     def predict_image(self, image_path):
-        """Pipeline Image Hybride (PIL + OpenCV)"""
         try:
             prob_dino = np.zeros(27)
             prob_eff = np.zeros(27)
             prob_xgb = np.zeros(27)
 
-            # 1. DINO
+            # 1. DINO (PyTorch)
             if 'dino' in self.img_models:
                 img_pil = Image.open(image_path).convert('RGB')
                 t_dino = self.img_transforms['dino'](img_pil).unsqueeze(0).to(self.device)
                 with torch.no_grad():
                     prob_dino = F.softmax(self.img_models['dino'](t_dino), dim=1).cpu().numpy()[0]
 
-            # 2. EffNet
+            # 2. EfficientNet (PyTorch)
             if 'effnet' in self.img_models:
                 img_pil = Image.open(image_path).convert('RGB')
                 t_eff = self.img_transforms['effnet'](img_pil).unsqueeze(0).to(self.device)
                 with torch.no_grad():
                     prob_eff = F.softmax(self.img_models['effnet'](t_eff), dim=1).cpu().numpy()[0]
 
-            # 3. XGBoost (OpenCV STRICT)
-            if 'xgb' in self.img_models and 'extractor' in self.img_models:
-                img_cv = cv2.imread(str(image_path))
-                if img_cv is not None:
-                    img_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
-                    img_cv = cv2.resize(img_cv, (224, 224))
-                    img_cv = img_cv / 255.0
-                    img_cv = (img_cv - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
-                    
-                    t_xgb = torch.tensor(img_cv.transpose(2, 0, 1), dtype=torch.float32).unsqueeze(0).to(self.device)
-                    with torch.no_grad():
-                        feats = self.img_models['extractor'](t_xgb).squeeze().cpu().numpy()
-                    prob_xgb = self.img_models['xgb'].predict_proba(feats.reshape(1, -1))[0]
+            # 3. XGBoost (Keras Preprocessing)
+            if 'xgb' in self.img_models and hasattr(self, 'keras_resnet'):
+                # Force path en string pour Keras
+                img_k = keras_image.load_img(str(image_path), target_size=(224, 224))
+                x = keras_image.img_to_array(img_k)
+                x = preprocess_input(x)
+                x = np.expand_dims(x, axis=0)
+                feats = self.keras_resnet.predict(x, verbose=0)
+                prob_xgb = self.img_models['xgb'].predict_proba(feats)[0]
 
-            # 4. Voting Dynamique
+            # 4. Voting
             w = MODEL_CONFIG['voting_weights']
             final_prob = np.zeros(27)
             total_weight = 0.0
@@ -194,19 +194,15 @@ class MultimodalClassifier:
             if 'dino' in self.img_models:
                 final_prob += prob_dino * w['dino']
                 total_weight += w['dino']
-            
-            if 'xgb' in self.img_models and 'extractor' in self.img_models:
+            if 'xgb' in self.img_models:
                 final_prob += prob_xgb * w['xgb']
                 total_weight += w['xgb']
-
             if 'effnet' in self.img_models:
                 final_prob += prob_eff * w['effnet']
                 total_weight += w['effnet']
 
-            if total_weight > 0:
-                final_prob /= total_weight
-            else:
-                final_prob[0] = 1.0 
+            if total_weight > 0: final_prob /= total_weight
+            else: final_prob[0] = 1.0 
 
             return self._format_output(final_prob)
 
@@ -220,23 +216,9 @@ class MultimodalClassifier:
             t = [text] if isinstance(text, str) else text
             if hasattr(self.text_model, "predict_proba"):
                 probs = self.text_model.predict_proba(t)[0]
-            elif hasattr(self.text_model, "decision_function"):
-                s = self.text_model.decision_function(t)[0]
-                probs = np.exp(s - np.max(s))
-                probs /= probs.sum()
             else:
                 probs = np.zeros(27); probs[0] = 1.0 
-            
-            results = []
-            for i, p in enumerate(probs):
-                code = self.OFFICIAL_CODES[i] if i < len(self.OFFICIAL_CODES) else str(i)
-                results.append({
-                    "label": code,
-                    "confidence": float(p),
-                    "name": self.mapping.get(code, self.mapping.get(int(code), "Inconnu"))
-                })
-            return sorted(results, key=lambda x: x['confidence'], reverse=True)
-            
+            return self._format_output(probs)
         except Exception: return self._fallback_result()
 
     def predict_fusion(self, text, image_path):
@@ -248,23 +230,22 @@ class MultimodalClassifier:
             w_t = MODEL_CONFIG['fusion_weights_global']['text']
             w_i = MODEL_CONFIG['fusion_weights_global']['image']
             
-            final = []
-            for lbl in set(s_txt) | set(s_img):
-                score = (s_txt.get(lbl, 0)*w_t) + (s_img.get(lbl, 0)*w_i)
-                final.append({
-                    "label": lbl, 
-                    "confidence": score,
-                    "name": self.mapping.get(lbl, self.mapping.get(int(lbl) if lbl.isdigit() else lbl, "Inconnu"))
-                })
-            return sorted(final, key=lambda x: x['confidence'], reverse=True)
+            final_probs = np.zeros(27)
+            for i, code in enumerate(self.OFFICIAL_CODES):
+                score = (s_txt.get(code, 0)*w_t) + (s_img.get(code, 0)*w_i)
+                final_probs[i] = score
+            
+            return self._format_output(final_probs)
         except Exception: return self._fallback_result()
 
     def _format_output(self, probabilities):
         results = []
         for i, p in enumerate(probabilities):
-            real_code = self.OFFICIAL_CODES[i] if i < len(self.OFFICIAL_CODES) else str(i)
-            name = self.mapping.get(real_code, self.mapping.get(int(real_code) if real_code.isdigit() else -1, "Inconnu"))
-            results.append({"label": real_code, "name": name, "confidence": float(p)})
+            if i < len(self.OFFICIAL_CODES):
+                real_code = self.OFFICIAL_CODES[i]
+                # ICI : ON UTILISE LE MAPPING EN DUR
+                name = self.mapping.get(real_code, f"Code {real_code}")
+                results.append({"label": real_code, "name": name, "confidence": float(p)})
         return sorted(results, key=lambda x: x['confidence'], reverse=True)
 
     def _fallback_result(self):

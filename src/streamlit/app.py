@@ -28,7 +28,6 @@ if (ASSETS_DIR / "style.css").exists():
 # --- INITIALISATION DU CLASSIFIEUR (SESSION STATE) ---
 if "classifier" not in st.session_state:
     with st.spinner("Chargement des cerveaux numériques (DINO + XGBoost + EfficientNet)..."):
-        # On importe la classe CORRECTEMENT NOMMÉE
         from utils.real_classifier import MultimodalClassifier
         try:
             # On instancie le vrai classifieur
@@ -55,7 +54,7 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("Produits", "84 916")
 col2.metric("Catégories", "27")
 col3.metric("Modalités", "Texte + Image")
-col4.metric("Précision", "86.5%") # Chiffre mis à jour (Multimodal)
+col4.metric("Précision", "86.5%")
 
 st.divider()
 
